@@ -1,11 +1,13 @@
 import { useStorage } from "@vueuse/core";
 import type { PropType, SlotsType, VNode } from "vue";
-import { defineComponent, h, onMounted, ref, shallowRef, watch } from "vue";
+import { defineComponent, h, onMounted, ref, shallowRef, watch, nextTick, onUnmounted } from "vue";
+import { useRoute, useRouter } from "vue-router";
 
 import "../styles/tabs.scss";
 
 export interface TabProps extends Record<string, unknown> {
   id: string;
+  navId?: string;
 }
 
 const tabStore = useStorage<Record<string, string>>("VUEPRESS_TAB_STORE", {});
@@ -75,6 +77,9 @@ export default defineComponent({
     // Refs of the tab buttons
     const tabRefs = shallowRef<HTMLUListElement[]>([]);
 
+    // stores anchors for each tab, non-reactive
+    const tabContentAnchors: Set<string>[] = [];
+
     // Update store
     const updateStore = (): void => {
       if (props.tabId)
@@ -109,6 +114,24 @@ export default defineComponent({
       updateStore();
     };
 
+    // find tab index for a URL hash
+    const findAnchorIndex = (hash: string): number => {
+      hash = hash?.substring(1);
+
+      if (hash) {
+        // match navId first
+        let index = props.data.findIndex(({ navId }) => hash === navId);
+
+        if (index !== -1) return index;
+
+        // if not found, try to match anchor inside tabs
+        index = tabContentAnchors.findIndex((set) => set.has(hash));
+        if (index !== -1) return index;
+      }
+
+      return -1;
+    };
+
     const getInitialIndex = (): number => {
       if (props.tabId) {
         const valueIndex = props.data.findIndex(
@@ -118,11 +141,32 @@ export default defineComponent({
         if (valueIndex !== -1) return valueIndex;
       }
 
+      const anchorIndex = findAnchorIndex(useRoute()?.hash);
+      if (anchorIndex !== -1) return anchorIndex;
+
       return props.active;
     };
 
+    let rmFunc: (() => void) | undefined;
+
     onMounted(() => {
       activeIndex.value = getInitialIndex();
+
+      // onBeforeRouteUpdate is broken
+      rmFunc = useRouter().beforeEach((to, _, next) => {
+        const anchorIndex = findAnchorIndex(to.hash);
+        console.info(to);
+        console.info(anchorIndex);
+
+        if (anchorIndex !== -1) {
+          activeIndex.value = anchorIndex;
+
+          // wait one tick for vue-router to scroll properly
+          void nextTick().then(next);
+        } else {
+          next();
+        }
+      });
 
       watch(
         () => tabStore.value[props.tabId],
@@ -136,13 +180,18 @@ export default defineComponent({
       );
     });
 
+    onUnmounted(() => {
+      rmFunc?.();
+      rmFunc = undefined;
+    });
+
     return (): VNode | null =>
       props.data.length
         ? h("div", { class: "vp-tabs" }, [
             h(
               "div",
               { class: "vp-tabs-nav", role: "tablist" },
-              props.data.map(({ id }, index) => {
+              props.data.map(({ id, navId }, index) => {
                 const isActive = index === activeIndex.value;
 
                 return h(
@@ -153,6 +202,7 @@ export default defineComponent({
                       if (element)
                         tabRefs.value[index] = <HTMLUListElement>element;
                     },
+                    id: navId ?? id, // set id for vue-router to scroll, avoid the warning
                     class: ["vp-tab-nav", { active: isActive }],
                     role: "tab",
                     "aria-controls": `tab-${props.id}-${index}`,
@@ -178,6 +228,20 @@ export default defineComponent({
                   id: `tab-${props.id}-${index}`,
                   role: "tabpanel",
                   "aria-expanded": isActive,
+                  onVnodeMounted(vnode) {
+                    const anchors = new Set<string>();
+
+                    // select and cache anchors inside the tab
+                    (vnode.el as HTMLUListElement)
+                      ?.querySelectorAll("a.header-anchor[href]")
+                      .forEach((e) => {
+                        const href = e.getAttribute("href");
+
+                        if (href?.startsWith("#"))
+                          anchors.add(href.substring(1));
+                      });
+                    tabContentAnchors[index] = anchors;
+                  },
                 },
                 [
                   h(

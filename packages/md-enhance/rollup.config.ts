@@ -35,6 +35,7 @@ export default [
       external: [
         "@vue/repl",
         "@vue/repl/codemirror-editor",
+        "vue-router",
         "balloon-css/balloon.css",
         "chart.js/auto",
         "echarts",

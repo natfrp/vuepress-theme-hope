@@ -14,7 +14,7 @@ export const tabs: PluginSimple = (md) => {
       const tabsData = data.map((item, index) => {
         const { id = titles[index] } = item;
 
-        return { id };
+        return { id, navId: item.navId };
       });
 
       return `\
